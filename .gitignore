@@ -1,0 +1,7 @@
+.claude/
+*.o
+*.exe
+*.out
+build/
+.vscode/
+.idea/
