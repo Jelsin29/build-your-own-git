@@ -1,13 +1,16 @@
 #include "blob.h"
+#include "commit.h"
 #include "hash.h"
 #include "object.h"
 #include "repo.h"
 #include "tree.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int cmd_init(int argc, char *argv[])
 {
@@ -205,6 +208,27 @@ static int cmd_cat_file(int argc, char *argv[])
             return EXIT_SUCCESS;
         }
 
+        if (strcmp(type, "commit") == 0) {
+            mygit_commit c;
+            ret = mygit_commit_read(".", hex, &c);
+            if (ret != 0) {
+                fprintf(stderr, "error: failed to read commit\n");
+                return EXIT_FAILURE;
+            }
+            fprintf(stdout, "tree %s\n", c.tree_hex);
+            for (size_t i = 0; i < c.parent_count; i++) {
+                fprintf(stdout, "parent %s\n", c.parent_hex[i]);
+            }
+            fprintf(stdout, "author %s <%s> %" PRId64 " %s\n",
+                    c.author_name, c.author_email,
+                    c.author_time, c.author_tz);
+            fprintf(stdout, "committer %s <%s> %" PRId64 " %s\n",
+                    c.committer_name, c.committer_email,
+                    c.committer_time, c.committer_tz);
+            fprintf(stdout, "\n%s\n", c.message);
+            return EXIT_SUCCESS;
+        }
+
         fprintf(stderr, "error: cat-file -p not implemented for '%s'\n", type);
         return EXIT_FAILURE;
     }
@@ -261,6 +285,124 @@ static int cmd_ls_tree(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
+static int cmd_commit_tree(int argc, char *argv[])
+{
+    const char *tree_hex = NULL;
+    const char *parent_hex = NULL;
+    const char *message = NULL;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+            parent_hex = argv[++i];
+        } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
+            message = argv[++i];
+        } else {
+            tree_hex = argv[i];
+        }
+    }
+
+    if (tree_hex == NULL || message == NULL) {
+        fprintf(stderr,
+                "usage: mygit commit-tree <tree-sha> [-p <parent>] -m <message>\n");
+        return EXIT_FAILURE;
+    }
+
+    if (strlen(tree_hex) != 40) {
+        fprintf(stderr, "error: not a valid tree hash '%s'\n", tree_hex);
+        return EXIT_FAILURE;
+    }
+
+    mygit_commit commit;
+    memset(&commit, 0, sizeof(commit));
+    strncpy(commit.tree_hex, tree_hex, 40);
+    commit.tree_hex[40] = '\0';
+
+    if (parent_hex != NULL) {
+        if (strlen(parent_hex) != 40) {
+            fprintf(stderr, "error: not a valid parent hash '%s'\n",
+                    parent_hex);
+            return EXIT_FAILURE;
+        }
+        strncpy(commit.parent_hex[0], parent_hex, 40);
+        commit.parent_hex[0][40] = '\0';
+        commit.parent_count = 1;
+    }
+
+    strncpy(commit.author_name, "mygit", sizeof(commit.author_name));
+    strncpy(commit.author_email, "mygit@local", sizeof(commit.author_email));
+    commit.author_time = (int64_t)time(NULL);
+    strncpy(commit.author_tz, "+0000", sizeof(commit.author_tz));
+
+    strncpy(commit.committer_name, "mygit", sizeof(commit.committer_name));
+    strncpy(commit.committer_email, "mygit@local",
+            sizeof(commit.committer_email));
+    commit.committer_time = commit.author_time;
+    strncpy(commit.committer_tz, "+0000", sizeof(commit.committer_tz));
+
+    strncpy(commit.message, message, sizeof(commit.message) - 1);
+
+    char hex[41];
+    if (mygit_commit_write(".", &commit, hex) == -1) {
+        fprintf(stderr, "error: failed to create commit: %s\n",
+                strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    fprintf(stdout, "%s\n", hex);
+    return EXIT_SUCCESS;
+}
+
+static int cmd_log(int argc, char *argv[])
+{
+    if (argc < 3) {
+        fprintf(stderr, "usage: mygit log <commit-sha>\n");
+        return EXIT_FAILURE;
+    }
+
+    const char *hex = argv[2];
+    if (strlen(hex) != 40) {
+        fprintf(stderr, "error: not a valid commit hash '%s'\n", hex);
+        return EXIT_FAILURE;
+    }
+
+    char current[41];
+    strncpy(current, hex, 41);
+
+    while (current[0] != '\0') {
+        mygit_commit commit;
+        int ret = mygit_commit_read(".", current, &commit);
+        if (ret == 1) {
+            fprintf(stderr, "fatal: bad object %s\n", current);
+            return EXIT_FAILURE;
+        }
+        if (ret == -1) {
+            fprintf(stderr, "error: failed to read commit: %s\n",
+                    strerror(errno));
+            return EXIT_FAILURE;
+        }
+
+        fprintf(stdout, "commit %s\n", current);
+        fprintf(stdout, "Author: %s <%s>\n",
+                commit.author_name, commit.author_email);
+
+        /* Format timestamp */
+        time_t ts = (time_t)commit.author_time;
+        struct tm *tm_info = gmtime(&ts);
+        char date_buf[64];
+        strftime(date_buf, sizeof(date_buf), "%c %z", tm_info);
+        fprintf(stdout, "Date:   %s\n", date_buf);
+        fprintf(stdout, "\n    %s\n\n", commit.message);
+
+        if (commit.parent_count > 0) {
+            strncpy(current, commit.parent_hex[0], 41);
+        } else {
+            break;
+        }
+    }
+
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -282,6 +424,14 @@ int main(int argc, char *argv[])
 
     if (strcmp(argv[1], "ls-tree") == 0) {
         return cmd_ls_tree(argc, argv);
+    }
+
+    if (strcmp(argv[1], "commit-tree") == 0) {
+        return cmd_commit_tree(argc, argv);
+    }
+
+    if (strcmp(argv[1], "log") == 0) {
+        return cmd_log(argc, argv);
     }
 
     fprintf(stderr, "mygit: unknown command '%s'\n", argv[1]);
