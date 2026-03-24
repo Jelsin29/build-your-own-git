@@ -35,6 +35,10 @@ typedef struct {
 
 /* Dashboard view */
 void view_dashboard_render(tui_state *state, int max_y, int max_x);
+int  view_dashboard_input(tui_state *state, int ch);
+
+/* Shared rendering helpers */
+void tui_render_hint_bar(int max_y, int max_x, const char *hints);
 
 /*
  * Launch the interactive TUI for mygit.
