@@ -2,7 +2,7 @@ CC      = gcc
 CFLAGS  = -std=c17 -Wall -Wextra -Werror -pedantic -Iinclude -g
 LDFLAGS = -lz -lcrypto
 
-SRC     = src/main.c src/repo.c src/hash.c src/object.c src/blob.c src/tree.c
+SRC     = src/main.c src/repo.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = mygit
 
@@ -15,7 +15,10 @@ TEST_BLOB_TARGET = tests/test_blob
 TEST_TREE_SRC    = tests/test_tree.c src/repo.c src/hash.c src/object.c src/blob.c src/tree.c
 TEST_TREE_TARGET = tests/test_tree
 
-.PHONY: all clean test test-repo test-blob test-tree debug
+TEST_COMMIT_SRC    = tests/test_commit.c src/repo.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c
+TEST_COMMIT_TARGET = tests/test_commit
+
+.PHONY: all clean test test-repo test-blob test-tree test-commit debug
 
 all: $(TARGET)
 
@@ -25,7 +28,7 @@ $(TARGET): $(OBJ)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test-repo test-blob test-tree
+test: test-repo test-blob test-tree test-commit
 
 test-repo: $(TEST_REPO_TARGET)
 	./$(TEST_REPO_TARGET)
@@ -45,8 +48,14 @@ test-tree: $(TEST_TREE_TARGET)
 $(TEST_TREE_TARGET): $(TEST_TREE_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+test-commit: $(TEST_COMMIT_TARGET)
+	./$(TEST_COMMIT_TARGET)
+
+$(TEST_COMMIT_TARGET): $(TEST_COMMIT_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 clean:
-	rm -f $(OBJ) $(TARGET) $(TEST_REPO_TARGET) $(TEST_BLOB_TARGET) $(TEST_TREE_TARGET)
+	rm -f $(OBJ) $(TARGET) $(TEST_REPO_TARGET) $(TEST_BLOB_TARGET) $(TEST_TREE_TARGET) $(TEST_COMMIT_TARGET)
 
 debug: CFLAGS += -fsanitize=address -fsanitize=undefined
 debug: LDFLAGS += -fsanitize=address -fsanitize=undefined
