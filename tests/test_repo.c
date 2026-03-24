@@ -77,13 +77,6 @@ static int file_has_content(const char *path, const char *expected)
     return strcmp(buf, expected) == 0;
 }
 
-static char *make_tmpdir(void)
-{
-    static char template[] = "/tmp/mygit_test_XXXXXX";
-    char *tmpdir = mkdtemp(template);
-    return tmpdir;
-}
-
 /* ---------- tests ---------- */
 
 static int test_init_creates_mygit_dir(void)
@@ -224,12 +217,17 @@ static int test_init_returns_neg1_on_bad_path(void)
     return 0;
 }
 
+static int test_init_returns_neg1_on_null(void)
+{
+    int result = mygit_init(NULL);
+    MU_ASSERT(result == -1, "init with NULL should return -1");
+    return 0;
+}
+
 /* ---------- main ---------- */
 
 int main(void)
 {
-    (void)make_tmpdir; /* suppress unused warning during red phase */
-
     fprintf(stderr, "\n=== mygit_init tests ===\n\n");
 
     MU_RUN_TEST(test_init_creates_mygit_dir);
@@ -241,6 +239,7 @@ int main(void)
     MU_RUN_TEST(test_init_creates_HEAD_file);
     MU_RUN_TEST(test_init_returns_1_if_already_exists);
     MU_RUN_TEST(test_init_returns_neg1_on_bad_path);
+    MU_RUN_TEST(test_init_returns_neg1_on_null);
 
     fprintf(stderr, "\n--- Results: %d/%d passed, %d failed ---\n\n",
             tests_passed, tests_run, tests_failed);
