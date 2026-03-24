@@ -1,32 +1,44 @@
 CC      = gcc
 CFLAGS  = -std=c17 -Wall -Wextra -Werror -pedantic -Iinclude -g
-LDFLAGS =
+LDFLAGS = -lz -lcrypto
 
-SRC     = src/main.c src/repo.c
+SRC     = src/main.c src/repo.c src/hash.c src/object.c src/blob.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = mygit
 
-TEST_SRC    = tests/test_repo.c src/repo.c
-TEST_TARGET = tests/test_repo
+TEST_REPO_SRC    = tests/test_repo.c src/repo.c
+TEST_REPO_TARGET = tests/test_repo
 
-.PHONY: all clean test debug
+TEST_BLOB_SRC    = tests/test_blob.c src/repo.c src/hash.c src/object.c src/blob.c
+TEST_BLOB_TARGET = tests/test_blob
+
+.PHONY: all clean test test-repo test-blob debug
 
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: $(TEST_TARGET)
-	./$(TEST_TARGET)
+test: test-repo test-blob
 
-$(TEST_TARGET): $(TEST_SRC)
+test-repo: $(TEST_REPO_TARGET)
+	./$(TEST_REPO_TARGET)
+
+test-blob: $(TEST_BLOB_TARGET)
+	./$(TEST_BLOB_TARGET)
+
+$(TEST_REPO_TARGET): $(TEST_REPO_SRC)
 	$(CC) $(CFLAGS) -o $@ $^
 
+$(TEST_BLOB_TARGET): $(TEST_BLOB_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 clean:
-	rm -f $(OBJ) $(TARGET) $(TEST_TARGET)
+	rm -f $(OBJ) $(TARGET) $(TEST_REPO_TARGET) $(TEST_BLOB_TARGET)
 
 debug: CFLAGS += -fsanitize=address -fsanitize=undefined
+debug: LDFLAGS += -fsanitize=address -fsanitize=undefined
 debug: clean all
