@@ -71,6 +71,9 @@ int tui_run(const char *repo_path)
         case VIEW_DASHBOARD:
             view_dashboard_render(&state, max_y, max_x);
             break;
+        case VIEW_OBJECTS:
+            view_objects_render(&state, max_y, max_x);
+            break;
         default:
             render_placeholder(&state, max_y, max_x);
             break;
@@ -85,11 +88,15 @@ int tui_run(const char *repo_path)
         }
 
         /* Dispatch input to current view */
+        tui_view_id prev_view = state.current_view;
         switch (state.current_view) {
         case VIEW_DASHBOARD:
             if (view_dashboard_input(&state, ch) == -1) {
                 running = 0;
             }
+            break;
+        case VIEW_OBJECTS:
+            view_objects_input(&state, ch);
             break;
         default:
             /* Placeholder views: Escape goes back to dashboard */
@@ -97,6 +104,13 @@ int tui_run(const char *repo_path)
                 state.current_view = VIEW_DASHBOARD;
             }
             break;
+        }
+
+        /* Load data when entering a new view */
+        if (state.current_view != prev_view) {
+            if (state.current_view == VIEW_OBJECTS) {
+                view_objects_load(&state);
+            }
         }
     }
 
