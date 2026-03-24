@@ -4,6 +4,7 @@
 #include "object.h"
 #include "repo.h"
 #include "tree.h"
+#include "tui.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -432,6 +433,10 @@ int main(int argc, char *argv[])
 
     if (strcmp(argv[1], "log") == 0) {
         return cmd_log(argc, argv);
+    }
+
+    if (strcmp(argv[1], "tui") == 0) {
+        return tui_run(".") == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
     fprintf(stderr, "mygit: unknown command '%s'\n", argv[1]);

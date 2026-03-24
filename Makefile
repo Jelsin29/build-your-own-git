@@ -1,8 +1,8 @@
 CC      = gcc
 CFLAGS  = -std=c17 -Wall -Wextra -Werror -pedantic -Iinclude -g
-LDFLAGS = -lz -lcrypto
+LDFLAGS = -lz -lcrypto -lncursesw
 
-SRC     = src/main.c src/repo.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c
+SRC     = src/main.c src/repo.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c src/tui.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = mygit
 
