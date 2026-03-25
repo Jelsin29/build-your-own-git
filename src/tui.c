@@ -94,6 +94,13 @@ int tui_run(const char *repo_path)
         /* Get input */
         int ch = getch();
 
+        if (ch == KEY_RESIZE) {
+            endwin();
+            refresh();
+            clear();
+            continue;
+        }
+
         if (ch == 'q') {
             running = 0;
             break;
@@ -135,7 +142,9 @@ int tui_run(const char *repo_path)
             if (state.current_view == VIEW_OBJECTS) {
                 view_objects_load(&state);
             } else if (state.current_view == VIEW_TREE) {
-                view_tree_load(&state, NULL);
+                /* If tree_hash is already set (cross-view nav), use it */
+                const char *hash = state.tree_hash[0] ? state.tree_hash : NULL;
+                view_tree_load(&state, hash);
             } else if (state.current_view == VIEW_COMMIT_LOG) {
                 view_commits_load(&state);
             } else if (state.current_view == VIEW_HASH_FILE) {

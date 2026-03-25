@@ -219,7 +219,12 @@ void view_detail_render(tui_state *state, int max_y, int max_x)
         }
     }
 
-    tui_render_hint_bar(max_y, max_x, "[j/k scroll]  [Escape back]  [q quit]");
+    const char *hints = "[j/k scroll]  [Escape back]  [q quit]";
+    if (state->detail_type == OBJ_TREE)
+        hints = "[j/k scroll]  [t tree browser]  [Escape back]  [q quit]";
+    else if (state->detail_type == OBJ_COMMIT)
+        hints = "[j/k scroll]  [l commit log]  [Escape back]  [q quit]";
+    tui_render_hint_bar(max_y, max_x, hints);
     refresh();
 }
 
@@ -234,6 +239,25 @@ int view_detail_input(tui_state *state, int ch)
     case KEY_UP:
         if (state->detail_scroll > 0)
             state->detail_scroll--;
+        break;
+    case 't':
+        /* Jump to tree browser if viewing a tree object */
+        if (state->detail_type == OBJ_TREE) {
+            char hash_copy[41];
+            strncpy(hash_copy, state->detail_hash, 40);
+            hash_copy[40] = '\0';
+            view_detail_free(state);
+            strncpy(state->tree_hash, hash_copy, 40);
+            state->tree_hash[40] = '\0';
+            state->current_view = VIEW_TREE;
+        }
+        break;
+    case 'l':
+        /* Jump to commit log if viewing a commit object */
+        if (state->detail_type == OBJ_COMMIT) {
+            view_detail_free(state);
+            state->current_view = VIEW_COMMIT_LOG;
+        }
         break;
     case 27: /* Escape */
         view_detail_free(state);
