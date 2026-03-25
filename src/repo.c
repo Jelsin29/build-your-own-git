@@ -2,6 +2,8 @@
 
 #include "repo.h"
 
+#include "config.h"
+
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -98,6 +100,11 @@ int mygit_init(const char *path)
 
     /* Write HEAD file */
     if (write_head(mygit_path) == -1) {
+        return -1;
+    }
+
+    /* Create default config file */
+    if (mygit_config_init(path) == -1) {
         return -1;
     }
 
