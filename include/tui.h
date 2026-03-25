@@ -88,6 +88,11 @@ void view_tree_render(tui_state *state, int max_y, int max_x);
 int  view_tree_input(tui_state *state, int ch);
 void view_tree_load(tui_state *state, const char *tree_hash);
 
+/* Hash file view */
+void view_hashfile_render(tui_state *state, int max_y, int max_x);
+int  view_hashfile_input(tui_state *state, int ch);
+void view_hashfile_load(tui_state *state);
+
 /* Commit log view */
 void view_commits_render(tui_state *state, int max_y, int max_x);
 int  view_commits_input(tui_state *state, int ch);

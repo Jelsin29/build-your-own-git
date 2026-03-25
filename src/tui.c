@@ -83,6 +83,9 @@ int tui_run(const char *repo_path)
         case VIEW_COMMIT_LOG:
             view_commits_render(&state, max_y, max_x);
             break;
+        case VIEW_HASH_FILE:
+            view_hashfile_render(&state, max_y, max_x);
+            break;
         default:
             render_placeholder(&state, max_y, max_x);
             break;
@@ -116,6 +119,9 @@ int tui_run(const char *repo_path)
         case VIEW_COMMIT_LOG:
             view_commits_input(&state, ch);
             break;
+        case VIEW_HASH_FILE:
+            view_hashfile_input(&state, ch);
+            break;
         default:
             /* Placeholder views: Escape goes back to dashboard */
             if (ch == 27) { /* Escape */
@@ -132,6 +138,8 @@ int tui_run(const char *repo_path)
                 view_tree_load(&state, NULL);
             } else if (state.current_view == VIEW_COMMIT_LOG) {
                 view_commits_load(&state);
+            } else if (state.current_view == VIEW_HASH_FILE) {
+                view_hashfile_load(&state);
             }
         }
     }
