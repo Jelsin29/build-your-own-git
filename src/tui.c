@@ -77,6 +77,9 @@ int tui_run(const char *repo_path)
         case VIEW_OBJECT_DETAIL:
             view_detail_render(&state, max_y, max_x);
             break;
+        case VIEW_TREE:
+            view_tree_render(&state, max_y, max_x);
+            break;
         default:
             render_placeholder(&state, max_y, max_x);
             break;
@@ -104,6 +107,9 @@ int tui_run(const char *repo_path)
         case VIEW_OBJECT_DETAIL:
             view_detail_input(&state, ch);
             break;
+        case VIEW_TREE:
+            view_tree_input(&state, ch);
+            break;
         default:
             /* Placeholder views: Escape goes back to dashboard */
             if (ch == 27) { /* Escape */
@@ -116,6 +122,8 @@ int tui_run(const char *repo_path)
         if (state.current_view != prev_view) {
             if (state.current_view == VIEW_OBJECTS) {
                 view_objects_load(&state);
+            } else if (state.current_view == VIEW_TREE) {
+                view_tree_load(&state, NULL);
             }
         }
     }

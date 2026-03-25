@@ -6,6 +6,8 @@
 
 #define TUI_PATH_MAX 4096
 #define TUI_MAX_OBJECTS 512
+#define TUI_MAX_TREE_ENTRIES 256
+#define TUI_TREE_STACK_DEPTH 16
 
 /* Color pairs */
 enum {
@@ -56,6 +58,14 @@ typedef struct {
     int obj_selected;
     int obj_scroll;
 
+    /* Tree browser */
+    char tree_hash[41];
+    char tree_stack[TUI_TREE_STACK_DEPTH][41];
+    int tree_depth;
+    int tree_selected;
+    int tree_scroll;
+    size_t tree_entry_count;
+
     /* Object detail view */
     char detail_hash[41];
     unsigned char *detail_data;
@@ -72,6 +82,11 @@ int  view_dashboard_input(tui_state *state, int ch);
 void view_objects_render(tui_state *state, int max_y, int max_x);
 int  view_objects_input(tui_state *state, int ch);
 void view_objects_load(tui_state *state);
+
+/* Tree browser view */
+void view_tree_render(tui_state *state, int max_y, int max_x);
+int  view_tree_input(tui_state *state, int ch);
+void view_tree_load(tui_state *state, const char *tree_hash);
 
 /* Object detail view */
 void view_detail_render(tui_state *state, int max_y, int max_x);
