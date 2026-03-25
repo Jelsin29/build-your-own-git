@@ -3,6 +3,7 @@
 #include "ref.h"
 #include "repo.h"
 
+#include <errno.h>
 #include <ftw.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -165,6 +166,178 @@ static int test_ref_resolve_invalid_content(void)
     return 0;
 }
 
+static int test_ref_resolve_chain_depth_2(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /* HEAD -> refs/heads/alias -> refs/heads/master -> SHA (2 hops) */
+    int wret = write_ref_file(dir, "HEAD", "ref: refs/heads/alias\n");
+    MU_ASSERT(wret == 0, "write HEAD failed");
+
+    wret = write_ref_file(dir, "refs/heads/alias",
+                          "ref: refs/heads/master\n");
+    MU_ASSERT(wret == 0, "write alias failed");
+
+    const char *sha = "abcdef0123456789abcdef0123456789abcdef01";
+    char content[64];
+    snprintf(content, sizeof(content), "%s\n", sha);
+    wret = write_ref_file(dir, "refs/heads/master", content);
+    MU_ASSERT(wret == 0, "write master failed");
+
+    char hex_out[41];
+    int ret = mygit_ref_resolve(dir, "HEAD", hex_out);
+    MU_ASSERT(ret == 0, "resolve should succeed for 2-hop chain");
+    MU_ASSERT(strcmp(hex_out, sha) == 0, "SHA should match through chain");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_resolve_chain_at_max_depth(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /*
+     * Build a chain of exactly MYGIT_MAX_REF_DEPTH (8) refs:
+     * ref0 -> ref1 -> ref2 -> ... -> ref6 -> ref7 (SHA)
+     * That's 7 symbolic hops + 1 direct = 8 iterations total.
+     */
+    const char *sha = "1111111111222222222233333333334444444444";
+
+    for (int i = 0; i < MYGIT_MAX_REF_DEPTH - 1; i++) {
+        char refname[64];
+        char target[128];
+        snprintf(refname, sizeof(refname), "refs/chain/link%d", i);
+        snprintf(target, sizeof(target), "ref: refs/chain/link%d\n", i + 1);
+        int wret = write_ref_file(dir, refname, target);
+        MU_ASSERT(wret == 0, "write chain link failed");
+    }
+
+    /* Last link is a direct SHA */
+    char last_ref[64];
+    snprintf(last_ref, sizeof(last_ref), "refs/chain/link%d",
+             MYGIT_MAX_REF_DEPTH - 1);
+    char sha_content[64];
+    snprintf(sha_content, sizeof(sha_content), "%s\n", sha);
+    int wret = write_ref_file(dir, last_ref, sha_content);
+    MU_ASSERT(wret == 0, "write last link failed");
+
+    char hex_out[41];
+    int ret = mygit_ref_resolve(dir, "refs/chain/link0", hex_out);
+    MU_ASSERT(ret == 0, "resolve should succeed at max depth");
+    MU_ASSERT(strcmp(hex_out, sha) == 0, "SHA should match at max depth");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_resolve_circular(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /* Two refs pointing to each other: A -> B -> A -> B -> ... */
+    int wret = write_ref_file(dir, "refs/heads/loopA",
+                              "ref: refs/heads/loopB\n");
+    MU_ASSERT(wret == 0, "write loopA failed");
+
+    wret = write_ref_file(dir, "refs/heads/loopB",
+                          "ref: refs/heads/loopA\n");
+    MU_ASSERT(wret == 0, "write loopB failed");
+
+    char hex_out[41];
+    errno = 0;
+    int ret = mygit_ref_resolve(dir, "refs/heads/loopA", hex_out);
+    MU_ASSERT(ret == -1, "circular ref should return -1");
+    MU_ASSERT(errno == ELOOP, "circular ref should set errno to ELOOP");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_resolve_exceeds_max_depth(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /*
+     * Build a chain of MYGIT_MAX_REF_DEPTH symbolic refs + 1 direct.
+     * That's 9 refs total — the loop runs 8 times and never reaches
+     * the direct SHA at link8.
+     */
+    const char *sha = "aaaaaaaaaa0000000000bbbbbbbbbb1111111111";
+
+    for (int i = 0; i <= MYGIT_MAX_REF_DEPTH; i++) {
+        char refname[64];
+        snprintf(refname, sizeof(refname), "refs/deep/link%d", i);
+
+        if (i < MYGIT_MAX_REF_DEPTH) {
+            char target[128];
+            snprintf(target, sizeof(target),
+                     "ref: refs/deep/link%d\n", i + 1);
+            int wret = write_ref_file(dir, refname, target);
+            MU_ASSERT(wret == 0, "write deep link failed");
+        } else {
+            char sha_content[64];
+            snprintf(sha_content, sizeof(sha_content), "%s\n", sha);
+            int wret = write_ref_file(dir, refname, sha_content);
+            MU_ASSERT(wret == 0, "write deep last link failed");
+        }
+    }
+
+    char hex_out[41];
+    errno = 0;
+    int ret = mygit_ref_resolve(dir, "refs/deep/link0", hex_out);
+    MU_ASSERT(ret == -1, "exceeding max depth should return -1");
+    MU_ASSERT(errno == ELOOP, "exceeding max depth should set errno ELOOP");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_resolve_dangling_symbolic(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /* HEAD points to a branch that doesn't exist */
+    int wret = write_ref_file(dir, "HEAD",
+                              "ref: refs/heads/nonexistent\n");
+    MU_ASSERT(wret == 0, "write HEAD failed");
+
+    char hex_out[41];
+    int ret = mygit_ref_resolve(dir, "HEAD", hex_out);
+    MU_ASSERT(ret == 1, "dangling symbolic ref should return 1 (not found)");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_resolve_empty_file(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /* Create a ref file that exists but is completely empty */
+    int wret = write_ref_file(dir, "refs/heads/empty", "");
+    MU_ASSERT(wret == 0, "write empty ref file failed");
+
+    char hex_out[41];
+    int ret = mygit_ref_resolve(dir, "refs/heads/empty", hex_out);
+    MU_ASSERT(ret == -1, "empty ref file should return -1");
+
+    rmrf(dir);
+    return 0;
+}
+
 /* ---------- main ---------- */
 
 int main(void)
@@ -175,6 +348,12 @@ int main(void)
     MU_RUN_TEST(test_ref_resolve_not_found);
     MU_RUN_TEST(test_ref_resolve_head_symbolic);
     MU_RUN_TEST(test_ref_resolve_invalid_content);
+    MU_RUN_TEST(test_ref_resolve_chain_depth_2);
+    MU_RUN_TEST(test_ref_resolve_chain_at_max_depth);
+    MU_RUN_TEST(test_ref_resolve_circular);
+    MU_RUN_TEST(test_ref_resolve_exceeds_max_depth);
+    MU_RUN_TEST(test_ref_resolve_dangling_symbolic);
+    MU_RUN_TEST(test_ref_resolve_empty_file);
 
     fprintf(stderr, "\n--- Results: %d/%d passed, %d failed ---\n\n",
             tests_passed, tests_run, tests_failed);
