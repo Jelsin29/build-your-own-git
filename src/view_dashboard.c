@@ -1,6 +1,10 @@
 #include "tui.h"
+#include "object.h"
 
+#include <dirent.h>
+#include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #define HEADER_START_Y    1
 #define SUBTITLE_OFFSET   1
@@ -30,6 +34,66 @@ static const char *menu_items[] = {
 };
 
 static const int menu_count = 7;
+
+#define STATS_COL 42
+
+typedef struct {
+    int blobs;
+    int trees;
+    int commits;
+    int total;
+} repo_stats;
+
+static repo_stats scan_repo_stats(const char *repo_path)
+{
+    repo_stats stats = {0, 0, 0, 0};
+    char objects_dir[TUI_PATH_MAX + 16];
+    snprintf(objects_dir, sizeof(objects_dir), "%s/.mygit/objects", repo_path);
+
+    DIR *dp = opendir(objects_dir);
+    if (dp == NULL) return stats;
+
+    struct dirent *prefix_ent;
+    while ((prefix_ent = readdir(dp)) != NULL) {
+        if (strlen(prefix_ent->d_name) != 2 || prefix_ent->d_name[0] == '.')
+            continue;
+
+        char prefix_path[TUI_PATH_MAX + 20];
+        int n = snprintf(prefix_path, sizeof(prefix_path), "%s/%.2s",
+                         objects_dir, prefix_ent->d_name);
+        if (n < 0 || (size_t)n >= sizeof(prefix_path)) continue;
+
+        DIR *sub = opendir(prefix_path);
+        if (sub == NULL) continue;
+
+        struct dirent *obj_ent;
+        while ((obj_ent = readdir(sub)) != NULL) {
+            if (obj_ent->d_name[0] == '.' || strlen(obj_ent->d_name) != 38)
+                continue;
+
+            char hash[41];
+            memcpy(hash, prefix_ent->d_name, 2);
+            memcpy(hash + 2, obj_ent->d_name, 38);
+            hash[40] = '\0';
+
+            unsigned char *raw = NULL;
+            size_t raw_len = 0;
+            if (mygit_object_read(repo_path, hash, &raw, &raw_len) == 0) {
+                if (raw_len >= 4 && memcmp(raw, "blob", 4) == 0)
+                    stats.blobs++;
+                else if (raw_len >= 4 && memcmp(raw, "tree", 4) == 0)
+                    stats.trees++;
+                else if (raw_len >= 6 && memcmp(raw, "commit", 6) == 0)
+                    stats.commits++;
+                stats.total++;
+                free(raw);
+            }
+        }
+        closedir(sub);
+    }
+    closedir(dp);
+    return stats;
+}
 
 void view_dashboard_render(tui_state *state, int max_y, int max_x)
 {
@@ -73,6 +137,38 @@ void view_dashboard_render(tui_state *state, int max_y, int max_x)
             mvprintw(items_y + i, MENU_LEFT_COL, "   %-*s", MENU_ITEM_WIDTH, menu_items[i]);
         }
     }
+
+    /* Stats panel on the right */
+    repo_stats stats = scan_repo_stats(state->repo_path);
+    int stats_y = menu_y;
+
+    attron(COLOR_PAIR(PAIR_ACCENT) | A_BOLD);
+    mvprintw(stats_y, STATS_COL, "Repository");
+    attroff(COLOR_PAIR(PAIR_ACCENT) | A_BOLD);
+
+    attron(COLOR_PAIR(PAIR_DIM));
+    mvhline(stats_y + 1, STATS_COL, ACS_HLINE, 20);
+    attroff(COLOR_PAIR(PAIR_DIM));
+
+    mvprintw(stats_y + 2, STATS_COL, "   Objects: ");
+    attron(A_BOLD);
+    printw("%d", stats.total);
+    attroff(A_BOLD);
+
+    mvprintw(stats_y + 3, STATS_COL, "   ");
+    attron(COLOR_PAIR(PAIR_STATUS));
+    printw("blobs:   %d", stats.blobs);
+    attroff(COLOR_PAIR(PAIR_STATUS));
+
+    mvprintw(stats_y + 4, STATS_COL, "   ");
+    attron(COLOR_PAIR(PAIR_ACCENT));
+    printw("trees:   %d", stats.trees);
+    attroff(COLOR_PAIR(PAIR_ACCENT));
+
+    mvprintw(stats_y + 5, STATS_COL, "   ");
+    attron(COLOR_PAIR(PAIR_HEADER));
+    printw("commits: %d", stats.commits);
+    attroff(COLOR_PAIR(PAIR_HEADER));
 
     /* Key hint bar */
     tui_render_hint_bar(max_y, max_x, "[j/k navigate]  [Enter select]  [q quit]");
