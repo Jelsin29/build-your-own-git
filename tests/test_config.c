@@ -1,0 +1,223 @@
+#define _XOPEN_SOURCE 700 /* for mkdtemp, nftw */
+
+#include "config.h"
+
+#include <ftw.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/* ---------- minunit-style test macros ---------- */
+
+static int tests_run    = 0;
+static int tests_passed = 0;
+static int tests_failed = 0;
+
+#define MU_ASSERT(test, message)                                        \
+    do {                                                                \
+        if (!(test)) {                                                  \
+            fprintf(stderr, "  FAIL: %s (%s:%d)\n",                    \
+                    message, __FILE__, __LINE__);                       \
+            return 1;                                                   \
+        }                                                               \
+    } while (0)
+
+#define MU_RUN_TEST(test_func)                                          \
+    do {                                                                \
+        fprintf(stderr, "  %-50s", #test_func);                        \
+        tests_run++;                                                    \
+        if (test_func() == 0) {                                        \
+            tests_passed++;                                             \
+            fprintf(stderr, "PASS\n");                                  \
+        } else {                                                        \
+            tests_failed++;                                             \
+        }                                                               \
+    } while (0)
+
+/* ---------- helpers ---------- */
+
+static int remove_cb(const char *fpath, const struct stat *sb,
+                     int typeflag, struct FTW *ftwbuf)
+{
+    (void)sb;
+    (void)typeflag;
+    (void)ftwbuf;
+    return remove(fpath);
+}
+
+static int rmrf(const char *path)
+{
+    return nftw(path, remove_cb, 64, FTW_DEPTH | FTW_PHYS);
+}
+
+/*
+ * Create a temp directory with .mygit/config containing the given text.
+ * Writes the temp dir path into dir_out (must be at least 64 bytes).
+ * Returns 0 on success, -1 on failure.
+ */
+static int setup_config(char *dir_out, const char *config_content)
+{
+    char tmpl[] = "/tmp/mygit_cfg_XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    if (dir == NULL)
+        return -1;
+
+    char mygit_dir[256];
+    snprintf(mygit_dir, sizeof(mygit_dir), "%s/.mygit", dir);
+    if (mkdir(mygit_dir, 0755) != 0)
+        return -1;
+
+    char config_path[256];
+    snprintf(config_path, sizeof(config_path), "%s/.mygit/config", dir);
+
+    FILE *fp = fopen(config_path, "w");
+    if (fp == NULL)
+        return -1;
+
+    fputs(config_content, fp);
+    fclose(fp);
+
+    strcpy(dir_out, dir);
+    return 0;
+}
+
+/* ---------- tests ---------- */
+
+static int test_config_get_basic(void)
+{
+    char dir[256];
+    int rc = setup_config(dir, "[user]\n\tname = John\n");
+    MU_ASSERT(rc == 0, "setup_config failed");
+
+    char value[MYGIT_MAX_VALUE];
+    int result = mygit_config_get(dir, "user", "name", value, sizeof(value));
+
+    MU_ASSERT(result == 0, "config_get should return 0 (found)");
+    MU_ASSERT(strcmp(value, "John") == 0, "value should be 'John'");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_config_get_with_spaces(void)
+{
+    char dir[256];
+    int rc = setup_config(dir, "[core]\n\teditor = vim --noplugin\n");
+    MU_ASSERT(rc == 0, "setup_config failed");
+
+    char value[MYGIT_MAX_VALUE];
+    int result = mygit_config_get(dir, "core", "editor",
+                                  value, sizeof(value));
+
+    MU_ASSERT(result == 0, "config_get should return 0 (found)");
+    MU_ASSERT(strcmp(value, "vim --noplugin") == 0,
+              "value should be 'vim --noplugin'");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_config_get_no_spaces(void)
+{
+    char dir[256];
+    int rc = setup_config(dir, "[core]\nbare=false\n");
+    MU_ASSERT(rc == 0, "setup_config failed");
+
+    char value[MYGIT_MAX_VALUE];
+    int result = mygit_config_get(dir, "core", "bare",
+                                  value, sizeof(value));
+
+    MU_ASSERT(result == 0, "config_get should return 0 (found)");
+    MU_ASSERT(strcmp(value, "false") == 0, "value should be 'false'");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_config_get_not_found_key(void)
+{
+    char dir[256];
+    int rc = setup_config(dir, "[user]\n\tname = John\n");
+    MU_ASSERT(rc == 0, "setup_config failed");
+
+    char value[MYGIT_MAX_VALUE];
+    int result = mygit_config_get(dir, "user", "email",
+                                  value, sizeof(value));
+
+    MU_ASSERT(result == 1, "config_get should return 1 (not found)");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_config_get_not_found_section(void)
+{
+    char dir[256];
+    int rc = setup_config(dir, "[user]\n\tname = John\n");
+    MU_ASSERT(rc == 0, "setup_config failed");
+
+    char value[MYGIT_MAX_VALUE];
+    int result = mygit_config_get(dir, "core", "name",
+                                  value, sizeof(value));
+
+    MU_ASSERT(result == 1, "config_get should return 1 (not found)");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_config_get_missing_file(void)
+{
+    char tmpl[] = "/tmp/mygit_cfg_XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    MU_ASSERT(dir != NULL, "mkdtemp failed");
+
+    /* no .mygit/config exists */
+    char value[MYGIT_MAX_VALUE];
+    int result = mygit_config_get(dir, "user", "name",
+                                  value, sizeof(value));
+
+    MU_ASSERT(result == 1, "config_get should return 1 (missing file)");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_config_get_case_insensitive(void)
+{
+    char dir[256];
+    int rc = setup_config(dir, "[USER]\n\tNAME = Alice\n");
+    MU_ASSERT(rc == 0, "setup_config failed");
+
+    char value[MYGIT_MAX_VALUE];
+    int result = mygit_config_get(dir, "user", "name",
+                                  value, sizeof(value));
+
+    MU_ASSERT(result == 0, "config_get should return 0 (found)");
+    MU_ASSERT(strcmp(value, "Alice") == 0, "value should be 'Alice'");
+
+    rmrf(dir);
+    return 0;
+}
+
+/* ---------- main ---------- */
+
+int main(void)
+{
+    fprintf(stderr, "\n=== mygit_config tests ===\n\n");
+
+    MU_RUN_TEST(test_config_get_basic);
+    MU_RUN_TEST(test_config_get_with_spaces);
+    MU_RUN_TEST(test_config_get_no_spaces);
+    MU_RUN_TEST(test_config_get_not_found_key);
+    MU_RUN_TEST(test_config_get_not_found_section);
+    MU_RUN_TEST(test_config_get_missing_file);
+    MU_RUN_TEST(test_config_get_case_insensitive);
+
+    fprintf(stderr, "\n--- Results: %d/%d passed, %d failed ---\n\n",
+            tests_passed, tests_run, tests_failed);
+
+    return tests_failed > 0 ? 1 : 0;
+}

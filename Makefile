@@ -18,7 +18,13 @@ TEST_TREE_TARGET = tests/test_tree
 TEST_COMMIT_SRC    = tests/test_commit.c src/repo.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c
 TEST_COMMIT_TARGET = tests/test_commit
 
-.PHONY: all clean test test-repo test-blob test-tree test-commit debug
+TEST_CONFIG_SRC    = tests/test_config.c src/config.c
+TEST_CONFIG_TARGET = tests/test_config
+
+TEST_REF_SRC    = tests/test_ref.c src/repo.c src/hash.c src/object.c src/ref.c
+TEST_REF_TARGET = tests/test_ref
+
+.PHONY: all clean test test-repo test-blob test-tree test-commit test-config test-ref debug
 
 all: $(TARGET)
 
@@ -28,7 +34,7 @@ $(TARGET): $(OBJ)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test-repo test-blob test-tree test-commit
+test: test-repo test-blob test-tree test-commit test-config test-ref
 
 test-repo: $(TEST_REPO_TARGET)
 	./$(TEST_REPO_TARGET)
@@ -54,8 +60,20 @@ test-commit: $(TEST_COMMIT_TARGET)
 $(TEST_COMMIT_TARGET): $(TEST_COMMIT_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+test-config: $(TEST_CONFIG_TARGET)
+	./$(TEST_CONFIG_TARGET)
+
+$(TEST_CONFIG_TARGET): $(TEST_CONFIG_SRC)
+	$(CC) $(CFLAGS) -o $@ $^
+
+test-ref: $(TEST_REF_TARGET)
+	./$(TEST_REF_TARGET)
+
+$(TEST_REF_TARGET): $(TEST_REF_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 clean:
-	rm -f $(OBJ) $(TARGET) $(TEST_REPO_TARGET) $(TEST_BLOB_TARGET) $(TEST_TREE_TARGET) $(TEST_COMMIT_TARGET)
+	rm -f $(OBJ) $(TARGET) $(TEST_REPO_TARGET) $(TEST_BLOB_TARGET) $(TEST_TREE_TARGET) $(TEST_COMMIT_TARGET) $(TEST_CONFIG_TARGET) $(TEST_REF_TARGET)
 
 debug: CFLAGS += -fsanitize=address -fsanitize=undefined
 debug: LDFLAGS += -fsanitize=address -fsanitize=undefined
