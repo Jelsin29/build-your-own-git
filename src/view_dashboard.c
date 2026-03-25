@@ -1,5 +1,6 @@
 #include "tui.h"
 #include "object.h"
+#include "repo.h"
 
 #include <dirent.h>
 #include <stdlib.h>
@@ -36,6 +37,9 @@ static const char *menu_items[] = {
 static const int menu_count = 7;
 
 #define STATS_COL 42
+
+static char status_msg[128];
+static int status_color = PAIR_STATUS;
 
 typedef struct {
     int blobs;
@@ -138,6 +142,13 @@ void view_dashboard_render(tui_state *state, int max_y, int max_x)
         }
     }
 
+    /* Status message */
+    if (status_msg[0] != '\0') {
+        attron(COLOR_PAIR(status_color) | A_BOLD);
+        mvprintw(items_y + menu_count + 1, MENU_LEFT_COL, "%s", status_msg);
+        attroff(COLOR_PAIR(status_color) | A_BOLD);
+    }
+
     /* Stats panel on the right */
     repo_stats stats = scan_repo_stats(state->repo_path);
     int stats_y = menu_y;
@@ -196,8 +207,23 @@ int view_dashboard_input(tui_state *state, int ch)
     case '\n':
     case KEY_ENTER:
         switch (state->menu_index) {
-        case 0: /* Init repository — handled later */
+        case 0: {
+            int rc = mygit_init(state->repo_path);
+            if (rc == 0) {
+                snprintf(status_msg, sizeof(status_msg),
+                         "Initialized .mygit/ repository");
+                status_color = PAIR_STATUS;
+            } else if (rc == 1) {
+                snprintf(status_msg, sizeof(status_msg),
+                         ".mygit/ already exists");
+                status_color = PAIR_ACCENT;
+            } else {
+                snprintf(status_msg, sizeof(status_msg),
+                         "Failed to initialize repository");
+                status_color = PAIR_ERROR;
+            }
             break;
+        }
         case 1:
             state->current_view = VIEW_HASH_FILE;
             break;
