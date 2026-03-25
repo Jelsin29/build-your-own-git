@@ -98,6 +98,11 @@ void view_commits_render(tui_state *state, int max_y, int max_x);
 int  view_commits_input(tui_state *state, int ch);
 void view_commits_load(tui_state *state);
 
+/* Commit form view */
+void view_commitform_render(tui_state *state, int max_y, int max_x);
+int  view_commitform_input(tui_state *state, int ch);
+void view_commitform_load(tui_state *state);
+
 /* Object detail view */
 void view_detail_render(tui_state *state, int max_y, int max_x);
 int  view_detail_input(tui_state *state, int ch);
