@@ -13,6 +13,7 @@ To understand what happens under the hood when you run `git add`, `git commit`, 
 - GCC with C17 support
 - zlib (`libz-dev` / `zlib-devel`)
 - OpenSSL (`libssl-dev` / `openssl-devel`)
+- ncurses (`libncurses-dev` / `ncurses-devel`) — for the TUI
 
 ### Compile
 
@@ -121,6 +122,22 @@ Date:   Mon Mar 24 11:00:00 2026 +0000
 
 `log` follows the parent chain (the DAG) from the given commit back to the root.
 
+### Interactive TUI
+
+```bash
+$ ./mygit tui
+```
+
+Launches an ncurses terminal interface with:
+- **Dashboard** — ASCII art header, repo stats (object counts by type), action menu
+- **Object Explorer** — browse all objects with type detection and size display
+- **Object Detail** — inspect blobs (scrollable content), trees (entry list), commits (metadata)
+- **Tree Browser** — navigate tree entries like a file manager, drill into subtrees with stack-based back navigation
+- **Commit Log** — sorted timeline of all commits with detail inspection
+- **Hash File** — browse filesystem and hash files as blobs
+
+Navigation: `j`/`k` to move, `Enter` to select, `Escape` to go back, `q` to quit. Cross-view navigation: `t` from a tree detail opens the tree browser, `l` from a commit detail opens the commit log.
+
 ## Complete workflow example
 
 Here's a full session showing how the pieces connect — this is essentially what `git add` + `git commit` do under the hood:
@@ -160,13 +177,20 @@ $ ./mygit log <commit2-sha>
 
 ```
 src/
-├── main.c       CLI entry point — dispatches to subcommands
-├── repo.c       Repository initialization (mygit init)
-├── hash.c       SHA-1 hashing + hex conversion utilities
-├── object.c     Generic object store — compress/write/read from .mygit/objects/
-├── blob.c       Blob creation (file → "blob <size>\0<content>" → hash → store)
-├── tree.c       Tree creation (sorted entries → binary format → hash → store)
-└── commit.c     Commit creation (tree + parents + metadata → hash → store)
+├── main.c            CLI entry point — dispatches to subcommands
+├── repo.c            Repository initialization (mygit init)
+├── hash.c            SHA-1 hashing + hex conversion utilities
+├── object.c          Generic object store — compress/write/read from .mygit/objects/
+├── blob.c            Blob creation (file → "blob <size>\0<content>" → hash → store)
+├── tree.c            Tree creation (sorted entries → binary format → hash → store)
+├── commit.c          Commit creation (tree + parents + metadata → hash → store)
+├── tui.c             ncurses init, event loop, view dispatch, KEY_RESIZE handling
+├── view_dashboard.c  ASCII header, stats panel, menu navigation
+├── view_objects.c    Object explorer — scans .mygit/objects/, type detection
+├── view_detail.c     Object inspection — blob content, tree entries, commit metadata
+├── view_tree.c       Tree browser — subtree navigation with stack-based back
+├── view_commits.c    Commit log — sorted timeline with detail inspection
+└── view_hashfile.c   File browser — hash files as blobs
 
 include/
 ├── repo.h       mygit_init()
@@ -174,7 +198,8 @@ include/
 ├── object.h     mygit_object_write(), mygit_object_read()
 ├── blob.h       mygit_blob_hash(), mygit_blob_write(), mygit_blob_read()
 ├── tree.h       mygit_tree_hash(), mygit_tree_write(), mygit_tree_read()
-└── commit.h     mygit_commit_write(), mygit_commit_read()
+├── commit.h     mygit_commit_write(), mygit_commit_read()
+└── tui.h        TUI state, view enum, color pairs, view function prototypes
 
 tests/
 ├── test_repo.c     10 tests — init, reinit, structure, HEAD content
@@ -258,5 +283,6 @@ C17 — compiled with `-Wall -Wextra -Werror -pedantic`. Zero warnings.
 
 - **zlib** — object compression/decompression
 - **OpenSSL** (`libcrypto`) — SHA-1 hashing
+- **ncurses** (`ncursesw`) — interactive TUI with wide-character/UTF-8 support
 
 No git libraries. No VCS libraries. Everything is built from scratch.
