@@ -338,12 +338,298 @@ static int test_ref_resolve_empty_file(void)
     return 0;
 }
 
+/* ---------- Phase 3: ref update + validation tests ---------- */
+
+static int test_ref_update_creates_file(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    int ret = mygit_ref_update(dir, "refs/heads/master", sha);
+    MU_ASSERT(ret == 0, "ref_update should succeed");
+
+    /* Verify file contents */
+    char path[512];
+    snprintf(path, sizeof(path), "%s/.mygit/refs/heads/master", dir);
+    FILE *fp = fopen(path, "r");
+    MU_ASSERT(fp != NULL, "ref file should exist");
+    char content[64];
+    char *got = fgets(content, sizeof(content), fp);
+    fclose(fp);
+    MU_ASSERT(got != NULL, "should read content");
+
+    /* Strip newline for comparison */
+    size_t clen = strlen(content);
+    if (clen > 0 && content[clen - 1] == '\n') content[clen - 1] = '\0';
+    MU_ASSERT(strcmp(content, sha) == 0, "file should contain the SHA");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_and_resolve_roundtrip(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3";
+    int ret = mygit_ref_update(dir, "refs/heads/main", sha);
+    MU_ASSERT(ret == 0, "update should succeed");
+
+    char hex_out[41];
+    ret = mygit_ref_resolve(dir, "refs/heads/main", hex_out);
+    MU_ASSERT(ret == 0, "resolve should succeed after update");
+    MU_ASSERT(strcmp(hex_out, sha) == 0, "roundtrip SHA should match");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_creates_parent_dirs(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "1111111111222222222233333333334444444444";
+    int ret = mygit_ref_update(dir, "refs/heads/feature/cool", sha);
+    MU_ASSERT(ret == 0, "update with nested dirs should succeed");
+
+    char hex_out[41];
+    ret = mygit_ref_resolve(dir, "refs/heads/feature/cool", hex_out);
+    MU_ASSERT(ret == 0, "resolve nested ref should succeed");
+    MU_ASSERT(strcmp(hex_out, sha) == 0, "nested ref SHA should match");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_rejects_dotdot(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    int ret = mygit_ref_update(dir, "refs/../etc/passwd", sha);
+    MU_ASSERT(ret == -1, "dotdot in refname should be rejected");
+    MU_ASSERT(errno == EINVAL, "errno should be EINVAL");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_rejects_absolute(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    int ret = mygit_ref_update(dir, "/refs/heads/master", sha);
+    MU_ASSERT(ret == -1, "absolute refname should be rejected");
+    MU_ASSERT(errno == EINVAL, "errno should be EINVAL");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_rejects_empty(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    int ret = mygit_ref_update(dir, "", sha);
+    MU_ASSERT(ret == -1, "empty refname should be rejected");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_rejects_lock_suffix(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    int ret = mygit_ref_update(dir, "refs/heads/master.lock", sha);
+    MU_ASSERT(ret == -1, ".lock suffix should be rejected");
+    MU_ASSERT(errno == EINVAL, "errno should be EINVAL");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_rejects_double_slash(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    int ret = mygit_ref_update(dir, "refs//heads/master", sha);
+    MU_ASSERT(ret == -1, "double slash should be rejected");
+    MU_ASSERT(errno == EINVAL, "errno should be EINVAL");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_update_rejects_invalid_hex(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /* Use a 40-char string that contains non-hex chars */
+    char bad_hex[41] = "gggggggggggggggggggggggggggggggggggggggg";
+    int ret = mygit_ref_update(dir, "refs/heads/master", bad_hex);
+    MU_ASSERT(ret == -1, "invalid hex should be rejected");
+    MU_ASSERT(errno == EINVAL, "errno should be EINVAL");
+
+    rmrf(dir);
+    return 0;
+}
+
+/* ---------- Phase 4: ref listing + HEAD tests ---------- */
+
+struct ref_collect {
+    int count;
+    char names[16][MYGIT_MAX_REFNAME];
+};
+
+static int collect_cb(const char *refname, const char hex[41], void *user_data)
+{
+    (void)hex;
+    struct ref_collect *rc = (struct ref_collect *)user_data;
+    if (rc->count < 16) {
+        strncpy(rc->names[rc->count], refname, MYGIT_MAX_REFNAME - 1);
+        rc->names[rc->count][MYGIT_MAX_REFNAME - 1] = '\0';
+        rc->count++;
+    }
+    return 0;
+}
+
+static int test_ref_list_multiple(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    mygit_ref_update(dir, "refs/heads/master", sha);
+    mygit_ref_update(dir, "refs/heads/develop", sha);
+
+    struct ref_collect rc = {0};
+    int ret = mygit_ref_list(dir, "refs/heads", collect_cb, &rc);
+    MU_ASSERT(ret == 0, "ref_list should succeed");
+    MU_ASSERT(rc.count == 2, "should find 2 refs");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_list_nested(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4";
+    mygit_ref_update(dir, "refs/heads/master", sha);
+    mygit_ref_update(dir, "refs/heads/feature/login", sha);
+
+    struct ref_collect rc = {0};
+    int ret = mygit_ref_list(dir, "refs/heads", collect_cb, &rc);
+    MU_ASSERT(ret == 0, "ref_list should succeed");
+    MU_ASSERT(rc.count == 2, "should find both flat and nested refs");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_ref_list_empty_dir(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    struct ref_collect rc = {0};
+    int ret = mygit_ref_list(dir, "refs/tags", collect_cb, &rc);
+    MU_ASSERT(ret == 0, "ref_list on empty dir should succeed");
+    MU_ASSERT(rc.count == 0, "should find 0 refs in empty dir");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_head_resolve_symbolic(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    const char *sha = "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3";
+    mygit_ref_update(dir, "refs/heads/master", sha);
+
+    char hex_out[41];
+    int ret = mygit_head_resolve(dir, hex_out);
+    MU_ASSERT(ret == 0, "head_resolve should succeed");
+    MU_ASSERT(strcmp(hex_out, sha) == 0, "HEAD should resolve to master SHA");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_head_resolve_empty_repo(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /* HEAD -> refs/heads/master but master doesn't exist */
+    char hex_out[41];
+    int ret = mygit_head_resolve(dir, hex_out);
+    MU_ASSERT(ret == 1, "head_resolve on empty repo should return 1");
+
+    rmrf(dir);
+    return 0;
+}
+
+static int test_head_resolve_detached(void)
+{
+    char tmpl[] = "/tmp/mygit_ref_test_XXXXXX";
+    char *dir = make_test_repo(tmpl);
+    MU_ASSERT(dir != NULL, "make_test_repo failed");
+
+    /* Write bare SHA into HEAD (detached state) */
+    const char *sha = "abcdef0123456789abcdef0123456789abcdef01";
+    char content[64];
+    snprintf(content, sizeof(content), "%s\n", sha);
+    write_ref_file(dir, "HEAD", content);
+
+    char hex_out[41];
+    int ret = mygit_head_resolve(dir, hex_out);
+    MU_ASSERT(ret == 0, "detached HEAD should resolve");
+    MU_ASSERT(strcmp(hex_out, sha) == 0, "detached HEAD SHA should match");
+
+    rmrf(dir);
+    return 0;
+}
+
 /* ---------- main ---------- */
 
 int main(void)
 {
     fprintf(stderr, "\n=== mygit_ref tests ===\n\n");
 
+    /* Phase 1-2: resolve tests */
     MU_RUN_TEST(test_ref_resolve_direct);
     MU_RUN_TEST(test_ref_resolve_not_found);
     MU_RUN_TEST(test_ref_resolve_head_symbolic);
@@ -354,6 +640,25 @@ int main(void)
     MU_RUN_TEST(test_ref_resolve_exceeds_max_depth);
     MU_RUN_TEST(test_ref_resolve_dangling_symbolic);
     MU_RUN_TEST(test_ref_resolve_empty_file);
+
+    /* Phase 3: update + validation tests */
+    MU_RUN_TEST(test_ref_update_creates_file);
+    MU_RUN_TEST(test_ref_update_and_resolve_roundtrip);
+    MU_RUN_TEST(test_ref_update_creates_parent_dirs);
+    MU_RUN_TEST(test_ref_update_rejects_dotdot);
+    MU_RUN_TEST(test_ref_update_rejects_absolute);
+    MU_RUN_TEST(test_ref_update_rejects_empty);
+    MU_RUN_TEST(test_ref_update_rejects_lock_suffix);
+    MU_RUN_TEST(test_ref_update_rejects_double_slash);
+    MU_RUN_TEST(test_ref_update_rejects_invalid_hex);
+
+    /* Phase 4: listing + HEAD tests */
+    MU_RUN_TEST(test_ref_list_multiple);
+    MU_RUN_TEST(test_ref_list_nested);
+    MU_RUN_TEST(test_ref_list_empty_dir);
+    MU_RUN_TEST(test_head_resolve_symbolic);
+    MU_RUN_TEST(test_head_resolve_empty_repo);
+    MU_RUN_TEST(test_head_resolve_detached);
 
     fprintf(stderr, "\n--- Results: %d/%d passed, %d failed ---\n\n",
             tests_passed, tests_run, tests_failed);
