@@ -35,12 +35,14 @@ static const char *menu_items[] = {
     "Hash a file",
     "Browse objects",
     "Explore trees",
+    "Browse files",
+    "Manage branches",
     "Create commit",
     "View commit log",
     "Quit",
 };
 
-static const int menu_count = 7;
+static const int menu_count = 9;
 
 #define STATS_COL 46
 
@@ -240,12 +242,18 @@ int view_dashboard_input(tui_state *state, int ch)
             state->current_view = VIEW_TREE;
             break;
         case 4:
-            state->current_view = VIEW_COMMIT_CREATE;
+            state->current_view = VIEW_FILES;
             break;
         case 5:
+            state->current_view = VIEW_BRANCHES;
+            break;
+        case 6:
+            state->current_view = VIEW_COMMIT_CREATE;
+            break;
+        case 7:
             state->current_view = VIEW_COMMIT_LOG;
             break;
-        case 6: /* Quit */
+        case 8: /* Quit */
             return -1;
         }
         break;

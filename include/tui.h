@@ -8,6 +8,9 @@
 #define TUI_MAX_OBJECTS 512
 #define TUI_MAX_TREE_ENTRIES 256
 #define TUI_TREE_STACK_DEPTH 16
+#define TUI_MAX_BRANCHES 64
+#define TUI_MAX_FILES 256
+#define TUI_DIR_STACK_DEPTH 16
 
 /* Color pairs */
 enum {
@@ -29,6 +32,8 @@ typedef enum {
     VIEW_COMMIT_CREATE,
     VIEW_HASH_FILE,
     VIEW_OBJECT_DETAIL,
+    VIEW_BRANCHES,
+    VIEW_FILES,
 } tui_view_id;
 
 /* Object type identifiers */
@@ -72,6 +77,24 @@ typedef struct {
     size_t detail_len;
     tui_obj_type detail_type;
     int detail_scroll;
+
+    /* Branch manager */
+    int branch_selected;
+    int branch_scroll;
+    size_t branch_count;
+    int branch_input_mode;     /* 0=browse, 1=creating new branch */
+    char branch_input[128];
+    size_t branch_input_len;
+    char branch_status[128];
+    int branch_status_color;
+
+    /* File browser */
+    int file_selected;
+    int file_scroll;
+    size_t file_count;
+    char file_cwd[TUI_PATH_MAX];
+    char file_dir_stack[TUI_DIR_STACK_DEPTH][TUI_PATH_MAX];
+    int file_dir_depth;
 } tui_state;
 
 /* Dashboard view */
@@ -108,6 +131,16 @@ void view_detail_render(tui_state *state, int max_y, int max_x);
 int  view_detail_input(tui_state *state, int ch);
 void view_detail_load(tui_state *state, const char *hash);
 void view_detail_free(tui_state *state);
+
+/* Branch manager view */
+void view_branches_render(tui_state *state, int max_y, int max_x);
+int  view_branches_input(tui_state *state, int ch);
+void view_branches_load(tui_state *state);
+
+/* File browser view */
+void view_files_render(tui_state *state, int max_y, int max_x);
+int  view_files_input(tui_state *state, int ch);
+void view_files_load(tui_state *state, const char *dir_path);
 
 /* Shared rendering helpers */
 void tui_render_hint_bar(int max_y, int max_x, const char *hints);
