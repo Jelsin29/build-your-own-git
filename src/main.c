@@ -13,6 +13,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -506,6 +507,141 @@ static int cmd_add(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
+static int cmd_commit_porcelain(int argc, char *argv[])
+{
+    const char *message = NULL;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
+            message = argv[++i];
+        }
+    }
+
+    if (message == NULL) {
+        fprintf(stderr, "usage: mygit commit -m <message>\n");
+        return EXIT_FAILURE;
+    }
+
+    /* 1. Read index */
+    mygit_index idx;
+    int ret = mygit_index_read(".", &idx);
+    if (ret == -1) {
+        fprintf(stderr, "error: failed to read index: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+    if (ret == 1 || idx.count == 0) {
+        fprintf(stderr, "nothing to commit (empty index)\n");
+        mygit_index_free(&idx);
+        return EXIT_FAILURE;
+    }
+
+    /* 2. Write tree from index */
+    char tree_hex[41];
+    if (mygit_write_tree(".", &idx, tree_hex) == -1) {
+        fprintf(stderr, "error: failed to write tree: %s\n", strerror(errno));
+        mygit_index_free(&idx);
+        return EXIT_FAILURE;
+    }
+    mygit_index_free(&idx);
+
+    /* 3. Resolve HEAD for parent commit */
+    char parent_hex[41] = {0};
+    int has_parent = 0;
+    ret = mygit_head_resolve(".", parent_hex);
+    if (ret == 0) {
+        has_parent = 1;
+    } else if (ret == -1) {
+        fprintf(stderr, "error: failed to resolve HEAD: %s\n",
+                strerror(errno));
+        return EXIT_FAILURE;
+    }
+    /* ret == 1 means no commits yet — root commit, no parent */
+
+    /* 4. Build commit object */
+    mygit_commit commit;
+    memset(&commit, 0, sizeof(commit));
+    strncpy(commit.tree_hex, tree_hex, 40);
+    commit.tree_hex[40] = '\0';
+
+    if (has_parent) {
+        strncpy(commit.parent_hex[0], parent_hex, 40);
+        commit.parent_hex[0][40] = '\0';
+        commit.parent_count = 1;
+    }
+
+    /* Read author from config */
+    char cfg_name[128], cfg_email[128];
+    if (mygit_config_get(".", "user", "name", cfg_name, sizeof(cfg_name)) != 0)
+        strncpy(cfg_name, "mygit", sizeof(cfg_name));
+    if (mygit_config_get(".", "user", "email", cfg_email, sizeof(cfg_email)) != 0)
+        strncpy(cfg_email, "mygit@local", sizeof(cfg_email));
+
+    strncpy(commit.author_name, cfg_name, sizeof(commit.author_name));
+    strncpy(commit.author_email, cfg_email, sizeof(commit.author_email));
+    commit.author_time = (int64_t)time(NULL);
+    strncpy(commit.author_tz, "+0000", sizeof(commit.author_tz));
+    strncpy(commit.committer_name, cfg_name, sizeof(commit.committer_name));
+    strncpy(commit.committer_email, cfg_email, sizeof(commit.committer_email));
+    commit.committer_time = commit.author_time;
+    strncpy(commit.committer_tz, "+0000", sizeof(commit.committer_tz));
+    strncpy(commit.message, message, sizeof(commit.message) - 1);
+
+    char commit_hex[41];
+    if (mygit_commit_write(".", &commit, commit_hex) == -1) {
+        fprintf(stderr, "error: failed to create commit: %s\n",
+                strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    /* 5. Update HEAD (or the branch HEAD points to) */
+    /* Read HEAD to see if it's symbolic */
+    FILE *fp = fopen("./.mygit/HEAD", "r");
+    if (fp == NULL) {
+        fprintf(stderr, "error: failed to read HEAD\n");
+        return EXIT_FAILURE;
+    }
+    char head_content[256];
+    if (fgets(head_content, (int)sizeof(head_content), fp) == NULL) {
+        fclose(fp);
+        fprintf(stderr, "error: failed to read HEAD content\n");
+        return EXIT_FAILURE;
+    }
+    fclose(fp);
+
+    /* Strip newline */
+    size_t hlen = strlen(head_content);
+    if (hlen > 0 && head_content[hlen - 1] == '\n')
+        head_content[hlen - 1] = '\0';
+
+    if (strncmp(head_content, "ref: ", 5) == 0) {
+        /* Symbolic HEAD — update the branch it points to */
+        const char *branch_ref = head_content + 5;
+        if (mygit_ref_update(".", branch_ref, commit_hex) == -1) {
+            fprintf(stderr, "error: failed to update %s\n", branch_ref);
+            return EXIT_FAILURE;
+        }
+    } else {
+        /* Detached HEAD — update HEAD directly */
+        FILE *hfp = fopen("./.mygit/HEAD", "w");
+        if (hfp == NULL) {
+            fprintf(stderr, "error: failed to update HEAD\n");
+            return EXIT_FAILURE;
+        }
+        fprintf(hfp, "%s\n", commit_hex);
+        fclose(hfp);
+    }
+
+    /* Extract short branch name for display */
+    if (strncmp(head_content, "ref: refs/heads/", 16) == 0) {
+        fprintf(stdout, "[%s %.*s] %s\n",
+                head_content + 16, 7, commit_hex, message);
+    } else {
+        fprintf(stdout, "[detached %.*s] %s\n", 7, commit_hex, message);
+    }
+
+    return EXIT_SUCCESS;
+}
+
 static int cmd_write_tree(void)
 {
     mygit_index idx;
@@ -652,6 +788,10 @@ int main(int argc, char *argv[])
 
     if (strcmp(argv[1], "commit-tree") == 0) {
         return cmd_commit_tree(argc, argv);
+    }
+
+    if (strcmp(argv[1], "commit") == 0) {
+        return cmd_commit_porcelain(argc, argv);
     }
 
     if (strcmp(argv[1], "log") == 0) {
