@@ -1,7 +1,9 @@
 #include "blob.h"
 #include "commit.h"
+#include "config.h"
 #include "hash.h"
 #include "object.h"
+#include "ref.h"
 #include "repo.h"
 #include "tree.h"
 #include "tui.h"
@@ -404,6 +406,101 @@ static int cmd_log(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
+static int cmd_update_ref(int argc, char *argv[])
+{
+    if (argc < 4) {
+        fprintf(stderr, "usage: mygit update-ref <refname> <sha>\n");
+        return EXIT_FAILURE;
+    }
+
+    const char *refname = argv[2];
+    const char *hex = argv[3];
+
+    if (strlen(hex) != 40) {
+        fprintf(stderr, "error: not a valid SHA-1 '%s'\n", hex);
+        return EXIT_FAILURE;
+    }
+
+    if (mygit_ref_update(".", refname, hex) == -1) {
+        fprintf(stderr, "error: failed to update ref '%s': %s\n",
+                refname, strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
+
+static int show_ref_cb(const char *refname, const char hex[41], void *user_data)
+{
+    (void)user_data;
+    fprintf(stdout, "%s %s\n", hex, refname);
+    return 0;
+}
+
+static int cmd_show_ref(void)
+{
+    int ret = mygit_ref_list(".", "refs", show_ref_cb, NULL);
+    if (ret == -1) {
+        fprintf(stderr, "error: failed to list refs: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
+}
+
+static int cmd_config(int argc, char *argv[])
+{
+    if (argc < 3) {
+        fprintf(stderr, "usage: mygit config <key> [<value>]\n");
+        return EXIT_FAILURE;
+    }
+
+    const char *key = argv[2];
+
+    /* Split key on first '.' to get section.name */
+    const char *dot = strchr(key, '.');
+    if (dot == NULL || dot == key || dot[1] == '\0') {
+        fprintf(stderr, "error: key does not contain a section: '%s'\n", key);
+        return EXIT_FAILURE;
+    }
+
+    char section[128];
+    size_t sec_len = (size_t)(dot - key);
+    if (sec_len >= sizeof(section)) {
+        fprintf(stderr, "error: section name too long\n");
+        return EXIT_FAILURE;
+    }
+    memcpy(section, key, sec_len);
+    section[sec_len] = '\0';
+
+    const char *name = dot + 1;
+
+    if (argc == 3) {
+        /* Get mode */
+        char value[512];
+        int ret = mygit_config_get(".", section, name, value, sizeof(value));
+        if (ret == 1) {
+            /* Not found — git exits with status 1 silently */
+            return EXIT_FAILURE;
+        }
+        if (ret == -1) {
+            fprintf(stderr, "error: failed to read config: %s\n",
+                    strerror(errno));
+            return EXIT_FAILURE;
+        }
+        fprintf(stdout, "%s\n", value);
+        return EXIT_SUCCESS;
+    }
+
+    /* Set mode (argc >= 4) */
+    const char *value = argv[3];
+    if (mygit_config_set(".", section, name, value) == -1) {
+        fprintf(stderr, "error: failed to set config: %s\n",
+                strerror(errno));
+        return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -433,6 +530,18 @@ int main(int argc, char *argv[])
 
     if (strcmp(argv[1], "log") == 0) {
         return cmd_log(argc, argv);
+    }
+
+    if (strcmp(argv[1], "update-ref") == 0) {
+        return cmd_update_ref(argc, argv);
+    }
+
+    if (strcmp(argv[1], "show-ref") == 0) {
+        return cmd_show_ref();
+    }
+
+    if (strcmp(argv[1], "config") == 0) {
+        return cmd_config(argc, argv);
     }
 
     if (strcmp(argv[1], "tui") == 0) {
