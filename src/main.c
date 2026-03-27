@@ -331,13 +331,21 @@ static int cmd_commit_tree(int argc, char *argv[])
         commit.parent_count = 1;
     }
 
-    strncpy(commit.author_name, "mygit", sizeof(commit.author_name));
-    strncpy(commit.author_email, "mygit@local", sizeof(commit.author_email));
+    /* Try to read user identity from config, fall back to defaults */
+    char cfg_name[128];
+    char cfg_email[128];
+    if (mygit_config_get(".", "user", "name", cfg_name, sizeof(cfg_name)) != 0)
+        strncpy(cfg_name, "mygit", sizeof(cfg_name));
+    if (mygit_config_get(".", "user", "email", cfg_email, sizeof(cfg_email)) != 0)
+        strncpy(cfg_email, "mygit@local", sizeof(cfg_email));
+
+    strncpy(commit.author_name, cfg_name, sizeof(commit.author_name));
+    strncpy(commit.author_email, cfg_email, sizeof(commit.author_email));
     commit.author_time = (int64_t)time(NULL);
     strncpy(commit.author_tz, "+0000", sizeof(commit.author_tz));
 
-    strncpy(commit.committer_name, "mygit", sizeof(commit.committer_name));
-    strncpy(commit.committer_email, "mygit@local",
+    strncpy(commit.committer_name, cfg_name, sizeof(commit.committer_name));
+    strncpy(commit.committer_email, cfg_email,
             sizeof(commit.committer_email));
     commit.committer_time = commit.author_time;
     strncpy(commit.committer_tz, "+0000", sizeof(commit.committer_tz));
@@ -357,19 +365,29 @@ static int cmd_commit_tree(int argc, char *argv[])
 
 static int cmd_log(int argc, char *argv[])
 {
-    if (argc < 3) {
-        fprintf(stderr, "usage: mygit log <commit-sha>\n");
-        return EXIT_FAILURE;
-    }
-
-    const char *hex = argv[2];
-    if (strlen(hex) != 40) {
-        fprintf(stderr, "error: not a valid commit hash '%s'\n", hex);
-        return EXIT_FAILURE;
-    }
-
     char current[41];
-    strncpy(current, hex, 41);
+
+    if (argc >= 3) {
+        const char *hex = argv[2];
+        if (strlen(hex) != 40) {
+            fprintf(stderr, "error: not a valid commit hash '%s'\n", hex);
+            return EXIT_FAILURE;
+        }
+        strncpy(current, hex, 41);
+    } else {
+        /* No argument — resolve HEAD */
+        int ret = mygit_head_resolve(".", current);
+        if (ret == 1) {
+            fprintf(stderr,
+                    "fatal: your current branch has no commits yet\n");
+            return EXIT_FAILURE;
+        }
+        if (ret == -1) {
+            fprintf(stderr, "error: failed to resolve HEAD: %s\n",
+                    strerror(errno));
+            return EXIT_FAILURE;
+        }
+    }
 
     while (current[0] != '\0') {
         mygit_commit commit;
