@@ -1,7 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "blob.h"
 #include "commit.h"
 #include "config.h"
 #include "hash.h"
+#include "index.h"
 #include "object.h"
 #include "ref.h"
 #include "repo.h"
@@ -13,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 static int cmd_init(int argc, char *argv[])
@@ -424,6 +428,110 @@ static int cmd_log(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
+static int cmd_add(int argc, char *argv[])
+{
+    if (argc < 3) {
+        fprintf(stderr, "usage: mygit add <file>...\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Read existing index (or start empty) */
+    mygit_index idx;
+    int ret = mygit_index_read(".", &idx);
+    if (ret == -1) {
+        fprintf(stderr, "error: failed to read index: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    for (int i = 2; i < argc; i++) {
+        const char *file_path = argv[i];
+
+        /* Stat the file for metadata */
+        struct stat st;
+        if (stat(file_path, &st) == -1) {
+            fprintf(stderr, "error: cannot stat '%s': %s\n",
+                    file_path, strerror(errno));
+            mygit_index_free(&idx);
+            return EXIT_FAILURE;
+        }
+
+        /* Create blob object */
+        char blob_hex[41];
+        if (mygit_blob_write(".", file_path, blob_hex) == -1) {
+            fprintf(stderr, "error: failed to hash '%s': %s\n",
+                    file_path, strerror(errno));
+            mygit_index_free(&idx);
+            return EXIT_FAILURE;
+        }
+
+        /* Build index entry */
+        mygit_index_entry entry;
+        memset(&entry, 0, sizeof(entry));
+
+        entry.ctime_s  = (uint32_t)st.st_ctim.tv_sec;
+        entry.ctime_ns = (uint32_t)st.st_ctim.tv_nsec;
+        entry.mtime_s  = (uint32_t)st.st_mtim.tv_sec;
+        entry.mtime_ns = (uint32_t)st.st_mtim.tv_nsec;
+        entry.dev      = (uint32_t)st.st_dev;
+        entry.ino      = (uint32_t)st.st_ino;
+        entry.mode     = (st.st_mode & 0111) ? 0100755 : 0100644;
+        entry.uid      = (uint32_t)st.st_uid;
+        entry.gid      = (uint32_t)st.st_gid;
+        entry.size     = (uint32_t)st.st_size;
+
+        /* Convert hex SHA to raw bytes */
+        for (int j = 0; j < 20; j++) {
+            unsigned int byte;
+            sscanf(blob_hex + j * 2, "%02x", &byte);
+            entry.sha1[j] = (unsigned char)byte;
+        }
+
+        strncpy(entry.name, file_path, MYGIT_INDEX_MAX_PATH - 1);
+
+        if (mygit_index_add(&idx, &entry) == -1) {
+            fprintf(stderr, "error: failed to add '%s' to index\n", file_path);
+            mygit_index_free(&idx);
+            return EXIT_FAILURE;
+        }
+    }
+
+    /* Write updated index */
+    if (mygit_index_write(".", &idx) == -1) {
+        fprintf(stderr, "error: failed to write index: %s\n", strerror(errno));
+        mygit_index_free(&idx);
+        return EXIT_FAILURE;
+    }
+
+    mygit_index_free(&idx);
+    return EXIT_SUCCESS;
+}
+
+static int cmd_write_tree(void)
+{
+    mygit_index idx;
+    int ret = mygit_index_read(".", &idx);
+    if (ret == -1) {
+        fprintf(stderr, "error: failed to read index: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+    if (ret == 1) {
+        /* No index — empty tree */
+        mygit_index_init(&idx);
+    }
+
+    char tree_hex[41];
+    ret = mygit_write_tree(".", &idx, tree_hex);
+    if (ret == -1) {
+        fprintf(stderr, "error: failed to write tree: %s\n", strerror(errno));
+        mygit_index_free(&idx);
+        return EXIT_FAILURE;
+    }
+
+    fprintf(stdout, "%s\n", tree_hex);
+    mygit_index_free(&idx);
+    return EXIT_SUCCESS;
+}
+
 static int cmd_update_ref(int argc, char *argv[])
 {
     if (argc < 4) {
@@ -548,6 +656,14 @@ int main(int argc, char *argv[])
 
     if (strcmp(argv[1], "log") == 0) {
         return cmd_log(argc, argv);
+    }
+
+    if (strcmp(argv[1], "add") == 0) {
+        return cmd_add(argc, argv);
+    }
+
+    if (strcmp(argv[1], "write-tree") == 0) {
+        return cmd_write_tree();
     }
 
     if (strcmp(argv[1], "update-ref") == 0) {
