@@ -2,7 +2,7 @@ CC      = gcc
 CFLAGS  = -std=c17 -Wall -Wextra -Werror -pedantic -Iinclude -g
 LDFLAGS = -lz -lcrypto -lncursesw
 
-SRC     = src/main.c src/repo.c src/config.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c src/ref.c src/tui.c src/view_dashboard.c src/view_objects.c src/view_detail.c src/view_tree.c src/view_commits.c src/view_hashfile.c src/view_commitform.c
+SRC     = src/main.c src/repo.c src/config.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c src/ref.c src/index.c src/tui.c src/view_dashboard.c src/view_objects.c src/view_detail.c src/view_tree.c src/view_commits.c src/view_hashfile.c src/view_commitform.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = mygit
 
@@ -24,7 +24,10 @@ TEST_CONFIG_TARGET = tests/test_config
 TEST_REF_SRC    = tests/test_ref.c src/repo.c src/config.c src/hash.c src/object.c src/ref.c
 TEST_REF_TARGET = tests/test_ref
 
-.PHONY: all clean test test-repo test-blob test-tree test-commit test-config test-ref debug
+TEST_INDEX_SRC    = tests/test_index.c src/repo.c src/config.c src/hash.c src/object.c src/blob.c src/tree.c src/index.c
+TEST_INDEX_TARGET = tests/test_index
+
+.PHONY: all clean test test-repo test-blob test-tree test-commit test-config test-ref test-index debug
 
 all: $(TARGET)
 
@@ -34,7 +37,7 @@ $(TARGET): $(OBJ)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test-repo test-blob test-tree test-commit test-config test-ref
+test: test-repo test-blob test-tree test-commit test-config test-ref test-index
 
 test-repo: $(TEST_REPO_TARGET)
 	./$(TEST_REPO_TARGET)
@@ -72,8 +75,14 @@ test-ref: $(TEST_REF_TARGET)
 $(TEST_REF_TARGET): $(TEST_REF_SRC)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+test-index: $(TEST_INDEX_TARGET)
+	./$(TEST_INDEX_TARGET)
+
+$(TEST_INDEX_TARGET): $(TEST_INDEX_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 clean:
-	rm -f $(OBJ) $(TARGET) $(TEST_REPO_TARGET) $(TEST_BLOB_TARGET) $(TEST_TREE_TARGET) $(TEST_COMMIT_TARGET) $(TEST_CONFIG_TARGET) $(TEST_REF_TARGET)
+	rm -f $(OBJ) $(TARGET) $(TEST_REPO_TARGET) $(TEST_BLOB_TARGET) $(TEST_TREE_TARGET) $(TEST_COMMIT_TARGET) $(TEST_CONFIG_TARGET) $(TEST_REF_TARGET) $(TEST_INDEX_TARGET)
 
 debug: CFLAGS += -fsanitize=address -fsanitize=undefined
 debug: LDFLAGS += -fsanitize=address -fsanitize=undefined
