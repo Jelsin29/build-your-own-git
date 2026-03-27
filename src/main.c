@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 static int cmd_init(int argc, char *argv[])
 {
@@ -668,6 +669,376 @@ static int cmd_write_tree(void)
     return EXIT_SUCCESS;
 }
 
+/* ---------- status ---------- */
+
+/*
+ * Flatten a tree into a sorted list of path → sha1 pairs.
+ * Used to compare HEAD tree vs index.
+ */
+typedef struct {
+    char name[MYGIT_INDEX_MAX_PATH];
+    unsigned char sha1[20];
+    uint32_t mode;
+} flat_tree_entry;
+
+static int flatten_tree(const char *repo_path, const char *tree_hex,
+                        const char *prefix,
+                        flat_tree_entry **out, size_t *out_count,
+                        size_t *out_cap)
+{
+    mygit_tree_entry *entries = NULL;
+    size_t count = 0;
+    if (mygit_tree_read(repo_path, tree_hex, &entries, &count) != 0) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        char full_name[MYGIT_INDEX_MAX_PATH];
+        if (prefix[0] != '\0') {
+            snprintf(full_name, sizeof(full_name), "%s%s", prefix, entries[i].name);
+        } else {
+            strncpy(full_name, entries[i].name, sizeof(full_name) - 1);
+            full_name[sizeof(full_name) - 1] = '\0';
+        }
+
+        if (entries[i].mode == MYGIT_MODE_TREE) {
+            /* Recurse into subtree */
+            char sub_hex[41];
+            mygit_hex(entries[i].hash, sub_hex);
+            char sub_prefix[MYGIT_INDEX_MAX_PATH + 1];
+            snprintf(sub_prefix, sizeof(sub_prefix), "%s/", full_name);
+            if (flatten_tree(repo_path, sub_hex, sub_prefix,
+                             out, out_count, out_cap) == -1) {
+                free(entries);
+                return -1;
+            }
+        } else {
+            /* File entry */
+            if (*out_count >= *out_cap) {
+                size_t new_cap = (*out_cap == 0) ? 32 : *out_cap * 2;
+                flat_tree_entry *new_out = realloc(*out,
+                    new_cap * sizeof(flat_tree_entry));
+                if (new_out == NULL) {
+                    free(entries);
+                    return -1;
+                }
+                *out = new_out;
+                *out_cap = new_cap;
+            }
+            flat_tree_entry *fe = &(*out)[*out_count];
+            memset(fe, 0, sizeof(*fe));
+            strncpy(fe->name, full_name, sizeof(fe->name) - 1);
+            memcpy(fe->sha1, entries[i].hash, 20);
+            fe->mode = entries[i].mode;
+            (*out_count)++;
+        }
+    }
+
+    free(entries);
+    return 0;
+}
+
+static int cmd_status(void)
+{
+    /* Resolve HEAD → commit → tree */
+    char head_hex[41];
+    flat_tree_entry *head_files = NULL;
+    size_t head_count = 0, head_cap = 0;
+
+    int ret = mygit_head_resolve(".", head_hex);
+    if (ret == 0) {
+        mygit_commit c;
+        if (mygit_commit_read(".", head_hex, &c) == 0) {
+            flatten_tree(".", c.tree_hex, "", &head_files,
+                         &head_count, &head_cap);
+        }
+    }
+
+    /* Read index */
+    mygit_index idx;
+    ret = mygit_index_read(".", &idx);
+    if (ret == -1) {
+        fprintf(stderr, "error: failed to read index\n");
+        free(head_files);
+        return EXIT_FAILURE;
+    }
+    if (ret == 1) {
+        mygit_index_init(&idx);
+    }
+
+    /* Read HEAD for branch name */
+    FILE *fp = fopen("./.mygit/HEAD", "r");
+    if (fp != NULL) {
+        char line[256];
+        if (fgets(line, (int)sizeof(line), fp) != NULL) {
+            size_t len = strlen(line);
+            if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+            if (strncmp(line, "ref: refs/heads/", 16) == 0) {
+                fprintf(stdout, "On branch %s\n", line + 16);
+            } else {
+                fprintf(stdout, "HEAD detached at %.7s\n", line);
+            }
+        }
+        fclose(fp);
+    }
+
+    /* Compare HEAD tree vs index → "Changes to be committed" */
+    int has_staged = 0;
+    for (size_t i = 0; i < idx.count; i++) {
+        /* Check if this file is new or modified vs HEAD */
+        int found = 0;
+        for (size_t j = 0; j < head_count; j++) {
+            if (strcmp(idx.entries[i].name, head_files[j].name) == 0) {
+                found = 1;
+                if (memcmp(idx.entries[i].sha1, head_files[j].sha1, 20) != 0) {
+                    if (!has_staged) {
+                        fprintf(stdout, "\nChanges to be committed:\n");
+                        has_staged = 1;
+                    }
+                    fprintf(stdout, "\tmodified:   %s\n", idx.entries[i].name);
+                }
+                break;
+            }
+        }
+        if (!found) {
+            if (!has_staged) {
+                fprintf(stdout, "\nChanges to be committed:\n");
+                has_staged = 1;
+            }
+            fprintf(stdout, "\tnew file:   %s\n", idx.entries[i].name);
+        }
+    }
+
+    /* Files in HEAD but not in index → staged deletion */
+    for (size_t j = 0; j < head_count; j++) {
+        if (mygit_index_find(&idx, head_files[j].name) == NULL) {
+            if (!has_staged) {
+                fprintf(stdout, "\nChanges to be committed:\n");
+                has_staged = 1;
+            }
+            fprintf(stdout, "\tdeleted:    %s\n", head_files[j].name);
+        }
+    }
+
+    if (!has_staged && idx.count == 0 && head_count == 0) {
+        fprintf(stdout, "\nnothing to commit (empty repository)\n");
+    } else if (!has_staged) {
+        fprintf(stdout, "\nnothing to commit, working tree clean\n");
+    }
+
+    mygit_index_free(&idx);
+    free(head_files);
+    return EXIT_SUCCESS;
+}
+
+/* ---------- branch ---------- */
+
+static int branch_list_cb(const char *refname, const char hex[41],
+                          void *user_data)
+{
+    (void)hex;
+    const char *current_branch = (const char *)user_data;
+
+    /* Extract branch name from refs/heads/<name> */
+    const char *name = refname;
+    if (strncmp(refname, "refs/heads/", 11) == 0) {
+        name = refname + 11;
+    }
+
+    if (current_branch != NULL && strcmp(name, current_branch) == 0) {
+        fprintf(stdout, "* %s\n", name);
+    } else {
+        fprintf(stdout, "  %s\n", name);
+    }
+    return 0;
+}
+
+static int cmd_branch(int argc, char *argv[])
+{
+    /* Determine current branch from HEAD */
+    char current_branch[256] = {0};
+    FILE *fp = fopen("./.mygit/HEAD", "r");
+    if (fp != NULL) {
+        char line[256];
+        if (fgets(line, (int)sizeof(line), fp) != NULL) {
+            size_t len = strlen(line);
+            if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+            if (strncmp(line, "ref: refs/heads/", 16) == 0) {
+                strncpy(current_branch, line + 16,
+                        sizeof(current_branch) - 1);
+            }
+        }
+        fclose(fp);
+    }
+
+    if (argc == 2) {
+        /* List branches */
+        return mygit_ref_list(".", "refs/heads", branch_list_cb,
+                              current_branch) == 0
+                   ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
+    /* Check for -d flag */
+    if (argc >= 3 && strcmp(argv[2], "-d") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "usage: mygit branch -d <name>\n");
+            return EXIT_FAILURE;
+        }
+        const char *name = argv[3];
+        if (strcmp(name, current_branch) == 0) {
+            fprintf(stderr, "error: cannot delete branch '%s' "
+                    "checked out at '.'\n", name);
+            return EXIT_FAILURE;
+        }
+        char ref_path[PATH_MAX];
+        snprintf(ref_path, sizeof(ref_path),
+                 "./.mygit/refs/heads/%s", name);
+        if (unlink(ref_path) == -1) {
+            fprintf(stderr, "error: branch '%s' not found\n", name);
+            return EXIT_FAILURE;
+        }
+        fprintf(stdout, "Deleted branch %s\n", name);
+        return EXIT_SUCCESS;
+    }
+
+    /* Create branch */
+    const char *name = argv[2];
+    char head_hex[41];
+    int ret = mygit_head_resolve(".", head_hex);
+    if (ret != 0) {
+        fprintf(stderr, "fatal: not a valid object name: 'HEAD'\n");
+        return EXIT_FAILURE;
+    }
+
+    char refname[MYGIT_MAX_REFNAME];
+    snprintf(refname, sizeof(refname), "refs/heads/%s", name);
+    if (mygit_ref_update(".", refname, head_hex) == -1) {
+        fprintf(stderr, "error: failed to create branch '%s': %s\n",
+                name, strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
+
+/* ---------- checkout ---------- */
+
+static int cmd_checkout(int argc, char *argv[])
+{
+    if (argc < 3) {
+        fprintf(stderr, "usage: mygit checkout <branch>\n");
+        return EXIT_FAILURE;
+    }
+
+    const char *target = argv[2];
+
+    /* Check if target is a branch name */
+    char refname[MYGIT_MAX_REFNAME];
+    snprintf(refname, sizeof(refname), "refs/heads/%s", target);
+
+    char target_hex[41];
+    int ret = mygit_ref_resolve(".", refname, target_hex);
+    if (ret != 0) {
+        fprintf(stderr, "error: pathspec '%s' did not match any branch\n",
+                target);
+        return EXIT_FAILURE;
+    }
+
+    /* Read the target commit's tree */
+    mygit_commit c;
+    ret = mygit_commit_read(".", target_hex, &c);
+    if (ret != 0) {
+        fprintf(stderr, "error: failed to read commit %s\n", target_hex);
+        return EXIT_FAILURE;
+    }
+
+    /* Flatten the target tree */
+    flat_tree_entry *target_files = NULL;
+    size_t target_count = 0, target_cap = 0;
+    if (flatten_tree(".", c.tree_hex, "", &target_files,
+                     &target_count, &target_cap) == -1) {
+        fprintf(stderr, "error: failed to read tree\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Rebuild index from the target tree */
+    mygit_index new_idx;
+    mygit_index_init(&new_idx);
+
+    for (size_t i = 0; i < target_count; i++) {
+        mygit_index_entry entry;
+        memset(&entry, 0, sizeof(entry));
+        entry.mode = target_files[i].mode;
+        memcpy(entry.sha1, target_files[i].sha1, 20);
+        strncpy(entry.name, target_files[i].name, MYGIT_INDEX_MAX_PATH - 1);
+        mygit_index_add(&new_idx, &entry);
+    }
+
+    /* Write the new index */
+    if (mygit_index_write(".", &new_idx) == -1) {
+        fprintf(stderr, "error: failed to write index\n");
+        mygit_index_free(&new_idx);
+        free(target_files);
+        return EXIT_FAILURE;
+    }
+
+    /* Restore working tree files from blobs */
+    for (size_t i = 0; i < target_count; i++) {
+        char hex[41];
+        mygit_hex(target_files[i].sha1, hex);
+
+        unsigned char *content = NULL;
+        size_t content_len = 0;
+        if (mygit_blob_read(".", hex, &content, &content_len) != 0) {
+            fprintf(stderr, "warning: failed to read blob for %s\n",
+                    target_files[i].name);
+            continue;
+        }
+
+        /* Create parent directories if needed */
+        char dir_buf[MYGIT_INDEX_MAX_PATH];
+        strncpy(dir_buf, target_files[i].name, sizeof(dir_buf) - 1);
+        dir_buf[sizeof(dir_buf) - 1] = '\0';
+        char *last_slash = strrchr(dir_buf, '/');
+        if (last_slash != NULL) {
+            *last_slash = '\0';
+            /* Create directories recursively */
+            for (char *p = dir_buf; *p != '\0'; p++) {
+                if (*p == '/') {
+                    *p = '\0';
+                    mkdir(dir_buf, 0755);
+                    *p = '/';
+                }
+            }
+            mkdir(dir_buf, 0755);
+        }
+
+        FILE *fp = fopen(target_files[i].name, "wb");
+        if (fp != NULL) {
+            if (content_len > 0) {
+                fwrite(content, 1, content_len, fp);
+            }
+            fclose(fp);
+        }
+        free(content);
+    }
+
+    mygit_index_free(&new_idx);
+    free(target_files);
+
+    /* Update HEAD to point to the branch */
+    FILE *head_fp = fopen("./.mygit/HEAD", "w");
+    if (head_fp == NULL) {
+        fprintf(stderr, "error: failed to update HEAD\n");
+        return EXIT_FAILURE;
+    }
+    fprintf(head_fp, "ref: refs/heads/%s\n", target);
+    fclose(head_fp);
+
+    fprintf(stdout, "Switched to branch '%s'\n", target);
+    return EXIT_SUCCESS;
+}
+
 static int cmd_update_ref(int argc, char *argv[])
 {
     if (argc < 4) {
@@ -790,8 +1161,20 @@ int main(int argc, char *argv[])
         return cmd_commit_tree(argc, argv);
     }
 
+    if (strcmp(argv[1], "status") == 0) {
+        return cmd_status();
+    }
+
     if (strcmp(argv[1], "commit") == 0) {
         return cmd_commit_porcelain(argc, argv);
+    }
+
+    if (strcmp(argv[1], "branch") == 0) {
+        return cmd_branch(argc, argv);
+    }
+
+    if (strcmp(argv[1], "checkout") == 0) {
+        return cmd_checkout(argc, argv);
     }
 
     if (strcmp(argv[1], "log") == 0) {
