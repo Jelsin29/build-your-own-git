@@ -19,7 +19,7 @@ To understand what happens under the hood when you run `git add`, `git commit`, 
 
 ```bash
 make          # builds the mygit binary
-make test     # runs all 96 tests across 7 suites
+make test     # runs all 112 tests across 8 suites
 make clean    # removes build artifacts
 make debug    # builds with AddressSanitizer + UBSan
 ```
@@ -178,6 +178,25 @@ $ ./mygit config user.name
 Jelsin
 ```
 
+### Diff
+
+```bash
+# Unstaged changes (working tree vs index)
+$ ./mygit diff
+--- a/hello.txt
++++ b/hello.txt
+@@ -1,3 +1,3 @@
+ line 1
+-line 2
++CHANGED
+ line 3
+
+# Staged changes (index vs HEAD)
+$ ./mygit diff --cached
+```
+
+Uses the [Myers diff algorithm](https://neil.fraser.name/writing/diff/myers.pdf) (the same algorithm real git uses) to compute the shortest edit script, with unified output format showing context lines and hunk headers.
+
 ### Branches and checkout
 
 ```bash
@@ -235,7 +254,8 @@ $ ./mygit log HEAD
 
 ```
 src/
-├── main.c            CLI entry point — 15 subcommands dispatched here
+├── main.c            CLI entry point — 16 subcommands dispatched here
+├── diff.c            Myers diff algorithm — line splitting, SES, unified output
 ├── repo.c            Repository initialization (mygit init)
 ├── hash.c            SHA-1 hashing + hex conversion utilities
 ├── object.c          Generic object store — compress/write/read from .mygit/objects/
@@ -266,6 +286,7 @@ include/
 ├── ref.h        mygit_ref_resolve(), mygit_ref_update(), mygit_ref_list()
 ├── config.h     mygit_config_get(), mygit_config_set(), mygit_config_init()
 ├── index.h      mygit_index_add(), mygit_index_write(), mygit_write_tree()
+├── diff.h       mygit_diff_myers(), mygit_diff_print_unified()
 └── tui.h        TUI state, view enum, color pairs, view function prototypes
 
 tests/
@@ -275,7 +296,8 @@ tests/
 ├── test_commit.c    9 tests — root/parent commits, DAG walking, error cases
 ├── test_config.c   15 tests — get/set, case insensitive, roundtrip, init
 ├── test_ref.c      25 tests — resolve, symbolic, circular, update, list, HEAD
-└── test_index.c    13 tests — add, sort, remove, binary roundtrip, write-tree
+├── test_index.c    13 tests — add, sort, remove, binary roundtrip, write-tree
+└── test_diff.c     16 tests — Myers algorithm, line splitting, unified output
 ```
 
 ## How git objects work (what I learned)
@@ -339,6 +361,12 @@ The index (`.mygit/index`) is a binary file in DIRC v2 format. Each entry has st
 
 Git's config is a simple INI file with `[section]` headers and `key = value` pairs. Section names are case-insensitive, keys are case-insensitive, values preserve case. There's no complex nested structure — just flat sections.
 
+### The diff algorithm — Myers
+
+Git uses the Myers diff algorithm (1986) to compute the shortest edit script between two files. The key insight: model diffing as finding the shortest path through an edit graph, where moving right = delete, down = insert, and diagonal = match. The algorithm explores all edit distances d = 0, 1, 2, ... until it finds a path from (0,0) to (N,M). It's O(ND) where D is the edit distance — fast for similar files, which is the common case in version control.
+
+The backtrace phase reconstructs the edit sequence by walking backward through saved V-array snapshots, one per edit distance level.
+
 ## Non-obvious gotchas discovered
 
 - **Tree entry sorting**: git sorts tree entries as if directory names end with `/`. So `foo` (a file) sorts differently than `foo` (a directory). This matters for hash reproducibility.
@@ -354,7 +382,7 @@ Git's config is a simple INI file with `[section]` headers and `key = value` pai
 
 ## Tests
 
-96 tests across 7 suites, all passing:
+112 tests across 8 suites, all passing:
 
 ```bash
 $ make test
@@ -365,9 +393,10 @@ $ make test
 === Config tests ===             15/15 passed
 === Ref tests ===                25/25 passed
 === Index tests ===              13/13 passed
+=== Diff tests ===               16/16 passed
 ```
 
-Tests verify SHA-1 hash correctness against known values, round-trip write/read integrity for all object types, binary format parsing, symbolic ref resolution chains, circular ref detection, INI config parsing, DIRC v2 index format, and DAG traversal.
+Tests verify SHA-1 hash correctness against known values, round-trip write/read integrity for all object types, binary format parsing, symbolic ref resolution chains, circular ref detection, INI config parsing, DIRC v2 index format, Myers diff algorithm correctness, and DAG traversal.
 
 ## Language
 
