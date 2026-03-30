@@ -2,7 +2,10 @@ CC      = gcc
 CFLAGS  = -std=c17 -Wall -Wextra -Werror -pedantic -Iinclude -g
 LDFLAGS = -lz -lcrypto -lncursesw
 
-SRC     = src/main.c src/repo.c src/config.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c src/ref.c src/index.c src/diff.c src/tui.c src/view_dashboard.c src/view_objects.c src/view_detail.c src/view_tree.c src/view_commits.c src/view_hashfile.c src/view_commitform.c src/view_branches.c src/view_files.c
+SRC     = src/main.c src/cmd_object.c src/cmd_porcelain.c src/cmd_ref.c src/cmd_diff.c \
+          src/tree_flatten.c src/write_tree.c \
+          src/repo.c src/config.c src/hash.c src/object.c src/blob.c src/tree.c src/commit.c src/ref.c src/index.c src/diff.c \
+          src/tui.c src/view_dashboard.c src/view_objects.c src/view_detail.c src/view_tree.c src/view_commits.c src/view_hashfile.c src/view_commitform.c src/view_branches.c src/view_files.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = mygit
 
@@ -24,7 +27,7 @@ TEST_CONFIG_TARGET = tests/test_config
 TEST_REF_SRC    = tests/test_ref.c src/repo.c src/config.c src/hash.c src/object.c src/ref.c
 TEST_REF_TARGET = tests/test_ref
 
-TEST_INDEX_SRC    = tests/test_index.c src/repo.c src/config.c src/hash.c src/object.c src/blob.c src/tree.c src/index.c
+TEST_INDEX_SRC    = tests/test_index.c src/repo.c src/config.c src/hash.c src/object.c src/blob.c src/tree.c src/index.c src/write_tree.c
 TEST_INDEX_TARGET = tests/test_index
 
 TEST_DIFF_SRC    = tests/test_diff.c src/diff.c
